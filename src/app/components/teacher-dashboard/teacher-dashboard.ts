@@ -16,6 +16,7 @@ import { TeacherProfileSettingsComponent } from '../teacher/teacher-profile-sett
 import { ContentManagement } from '../teacher/content-management/content-management';
 import { ExamReminders } from '../teacher/exam-reminders/exam-reminders';
 import { VoicePlaybackService } from '../../services/voice-playback.service';
+import { environment } from '../../../environments/environment';
 
 type DashboardCourse = {
   title: string;
@@ -143,7 +144,7 @@ export class TeacherDashboard implements OnInit {
   teacherReplayListOpen = false;
   pendingMeetInterfaceDelete: MeetSession | null = null;
   private hiddenMeetInterfaceIds = new Set<string>();
-  readonly meetApiBaseUrl = 'http://localhost:3000/api/meet';
+  readonly meetApiBaseUrl = `${environment.backendUrl}/api/meet`;
   meetForm = {
     title: '',
     topic: '',

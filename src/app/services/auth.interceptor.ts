@@ -1,11 +1,23 @@
 import { Injectable } from '@angular/core';
 import { HttpErrorResponse, HttpInterceptor, HttpRequest, HttpHandler, HttpEvent } from '@angular/common/http';
 import { Observable, catchError, switchMap, throwError } from 'rxjs';
+import { environment } from '../../environments/environment';
 import { AuthService } from './auth.service';
 
 @Injectable()
 export class AuthInterceptor implements HttpInterceptor {
   constructor(private authService: AuthService) {}
+
+  private withBackendUrl(req: HttpRequest<any>): HttpRequest<any> {
+    const backendUrl = environment.backendUrl.replace(/\/$/, '');
+    const isApiRequest = req.url.startsWith('/api/') || req.url.startsWith('/auth/');
+
+    if (!backendUrl || !isApiRequest) {
+      return req;
+    }
+
+    return req.clone({ url: `${backendUrl}${req.url}` });
+  }
 
   private redirectToLoginWithRole(role: string | null) {
     if (typeof window === 'undefined') {
@@ -18,14 +30,15 @@ export class AuthInterceptor implements HttpInterceptor {
 
   intercept(req: HttpRequest<any>, next: HttpHandler): Observable<HttpEvent<any>> {
     const token = this.authService.getToken();
+    const apiReq = this.withBackendUrl(req);
 
     const authReq = token
-      ? req.clone({
+      ? apiReq.clone({
           setHeaders: {
             Authorization: `Bearer ${token}`,
           },
         })
-      : req;
+      : apiReq;
 
     return next.handle(authReq).pipe(
       catchError((error: HttpErrorResponse) => {
@@ -63,7 +76,7 @@ export class AuthInterceptor implements HttpInterceptor {
               return throwError(() => error);
             }
 
-            const retryReq = req.clone({
+            const retryReq = apiReq.clone({
               setHeaders: {
                 Authorization: `Bearer ${refreshedToken}`,
               },

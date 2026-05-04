@@ -14,6 +14,7 @@ import { StudentForum } from '../student/student-forum/student-forum';
 import { TeacherProfileSettingsComponent } from '../teacher/teacher-profile-settings/teacher-profile-settings';
 import { VoicePlaybackService } from '../../services/voice-playback.service';
 import { NotificationService } from '../../services/notification.service';
+import { environment } from '../../../environments/environment';
 
 type StudentLevel = 'debutant' | 'intermediaire' | 'avance';
 type StudentTab =
@@ -397,8 +398,7 @@ export class StudentDashboard implements OnInit, OnDestroy {
   previewVideoFailed = false;
   previewDocumentVoiceLoading = false;
   previewDocumentVoiceMessage = '';
-  readonly backendBaseUrl =
-    `${window.location.protocol}//${window.location.hostname}:3000`;
+  readonly backendBaseUrl = environment.backendUrl;
 
   overviewCards: OverviewCard[] = [];
   recommendations: RecommendationItem[] = [];
