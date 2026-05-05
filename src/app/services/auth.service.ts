@@ -235,6 +235,12 @@ export class AuthService {
     );
   }
 
+  updateStudentLevel(level: 'debutant' | 'intermediaire' | 'avance', assessmentResult?: any): Observable<any> {
+    return this.http.post<any>('/api/student/level', { level, assessmentResult }).pipe(
+      catchError(this.handleError('updateStudentLevel'))
+    );
+  }
+
   // ────────────────────────────────────────────────
   // Gestion des utilisateurs (Admin)
   // ────────────────────────────────────────────────

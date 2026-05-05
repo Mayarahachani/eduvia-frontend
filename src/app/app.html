@@ -37,8 +37,16 @@
       (resetCompleted)="onResetCompleted()" />
   }
 
+  @else if (userRole() === 'student' && studentNeedsAssessment()) {
+    <app-ai-assessment
+      [studentName]="'Student User'"
+      (completed)="onAssessmentCompleted($event)" />
+  }
+
   @else if (userRole() === 'student') {
-    <app-student-dashboard (logout)="onLogout()" />
+    <app-student-dashboard
+      [studentLevel]="studentAssessmentLevel()"
+      (logout)="onLogout()" />
   }
   @else if (userRole() === 'teacher') {
     <app-teacher-dashboard (logout)="onLogout()" />

@@ -5,7 +5,6 @@ import { FormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
-import { AiAssessment } from '../student/ai-assessment/ai-assessment';
 import { Chatbot } from '../student/chatbot/chatbot';
 import { ClubSuggestions } from '../student/club-suggestions/club-suggestions';
 import { CourseQuiz } from '../student/course-quiz/course-quiz';
@@ -15,12 +14,14 @@ import { TeacherProfileSettingsComponent } from '../teacher/teacher-profile-sett
 import { VoicePlaybackService } from '../../services/voice-playback.service';
 import { NotificationService } from '../../services/notification.service';
 import { environment } from '../../../environments/environment';
+import { AiAssessment } from '../student/ai-assessment/ai-assessment';
 
 type StudentLevel = 'debutant' | 'intermediaire' | 'avance';
 type StudentTab =
   | 'parcours'
   | 'planificateur'
   | 'recommendation'
+  | 'portfolio'
   | 'communaute'
   | 'clubs'
   | 'assistant'
@@ -195,6 +196,12 @@ type StoredQuizAttempt = {
   passed?: boolean;
 };
 
+type PortfolioRemediationAttempt = {
+  score: number;
+  passed: boolean;
+  submittedAt: string;
+};
+
 type LearningPathCourse = {
   id: string;
   title: string;
@@ -293,6 +300,33 @@ type LeaderboardPayload = {
   };
 };
 
+type PortfolioCourseSummary = {
+  courseTitle: string;
+  level: string;
+  resourceCount: number;
+  quizCount: number;
+  teacherName: string;
+  overview: string;
+  notions: Array<{ notion: string; explanation: string; importance: string; example: string }>;
+  details: Array<{ title: string; explanation: string; bullets: string[] }>;
+  nextActions: string[];
+  revisionPlan: Array<{ step: number; text: string }>;
+  glossary: string[];
+  generatedAt: string;
+};
+
+type AssessmentResult = {
+  level: StudentLevel;
+  levelLabel: string;
+  score: number;
+  correctCount: number;
+  totalQuestions: number;
+  strengths: string[];
+  weaknesses: string[];
+  recommendation: string;
+  completedAt: string;
+};
+
 type CourseCompletionDialog = {
   visible: boolean;
   courseTitle: string;
@@ -376,6 +410,7 @@ export class StudentDashboard implements OnInit, OnDestroy {
   tabs: { id: StudentTab; label: string }[] = [
     { id: 'parcours', label: 'Parcours' },
     { id: 'recommendation', label: 'Recommendation' },
+    { id: 'portfolio', label: 'Portfolio' },
     { id: 'planificateur', label: 'Planificateur' },
     { id: 'communaute', label: 'Communaute' },
     { id: 'clubs', label: 'Clubs' },
@@ -468,11 +503,19 @@ export class StudentDashboard implements OnInit, OnDestroy {
   leaderboardFilter: LeaderboardLevelFilter = 'tous';
   leaderboard: LeaderboardPayload | null = null;
   leaderboardLevels: { id: LeaderboardLevelFilter; label: string }[] = [
-    { id: 'tous', label: 'Tous' },
-    { id: 'debutant', label: 'Debutants' },
-    { id: 'intermediaire', label: 'Intermediaires' },
-    { id: 'avance', label: 'Avances' },
+    { id: 'tous', label: 'Tous les niveaux' },
   ];
+  portfolioSummaryLoading = false;
+  portfolioSummaryError = '';
+  portfolioSummary: PortfolioCourseSummary | null = null;
+  portfolioSummaryOpen = false;
+  portfolioSummaryCourse: CourseCatalogItem | null = null;
+  remediationCenterOpen = false;
+  remediationDirectQuizOpen = false;
+  remediationQuizLoadingKey = '';
+  private portfolioRemediationScores: Record<string, number | PortfolioRemediationAttempt> = {};
+  private passedPortfolioRemediationKeys = new Set<string>();
+  levelRetakeOpen = false;
   internshipsLoading = false;
   internshipsError = '';
   internships: InternshipOpportunity[] = [];
@@ -554,9 +597,11 @@ export class StudentDashboard implements OnInit, OnDestroy {
   }
 
   ngOnInit(): void {
+    this.studentLevel = this.readStoredStudentLevel() || this.studentLevel;
     this.studentProfile.levelLabel = this.levelLabel(this.studentLevel);
     this.studentProfile.className = this.readStoredStudentClass();
     this.loadHeaderProfile();
+    this.loadPortfolioRemediationScores();
     this.loadHiddenMeetInterfaceIds();
     this.loadClassStudentCountFallback();
     this.clearCachedDashboard();
@@ -609,6 +654,7 @@ export class StudentDashboard implements OnInit, OnDestroy {
     this.closeFlashcardDropdowns();
     this.closeInternshipDomainDropdown();
     if (tabId === 'classement') {
+      this.leaderboardFilter = 'tous';
       this.loadLeaderboard();
     }
     if (tabId === 'stages') {
@@ -2516,8 +2562,18 @@ export class StudentDashboard implements OnInit, OnDestroy {
   }
 
   closeStandaloneQuiz() {
+    const wasDirectPortfolioQuiz =
+      this.remediationDirectQuizOpen &&
+      this.selectedStandaloneQuiz?.quizMode === 'portfolio-remediation';
+
     this.selectedStandaloneQuizId = null;
     this.selectedStandaloneQuiz = null;
+
+    if (wasDirectPortfolioQuiz) {
+      this.remediationCenterOpen = false;
+      this.remediationDirectQuizOpen = false;
+      this.remediationQuizLoadingKey = '';
+    }
   }
 
   onQuizSubmitted(quizId: string) {
@@ -2530,6 +2586,10 @@ export class StudentDashboard implements OnInit, OnDestroy {
     this.markQuizCompleted(resolvedQuizId);
     const attempt = this.readStoredQuizAttempt(resolvedQuizId);
     const result = attempt ? this.parseStoredQuizResult(attempt) : null;
+
+    if (result && this.selectedStandaloneQuiz?.quizMode === 'portfolio-remediation') {
+      this.savePortfolioRemediationScore(this.selectedStandaloneQuiz, result.score ?? 0, result.passed === true);
+    }
 
     if (resolvedQuizId && result && this.isMongoObjectId(resolvedQuizId)) {
       const status = result.passed ? 'passed' : 'completed';
@@ -2550,6 +2610,439 @@ export class StudentDashboard implements OnInit, OnDestroy {
     }
 
     window.setTimeout(() => this.loadStudentContent(), 350);
+  }
+
+  get portfolioAverageScore() {
+    return this.initialAssessmentResult()?.score || 0;
+  }
+
+  get portfolioCompletedCourses() {
+    return this.courseCatalog.filter(course => course.progress >= 100).length;
+  }
+
+  get portfolioWeakAcquis() {
+    return this.recommendationAnalysis?.weakAcquis || [];
+  }
+
+  get portfolioQuizTraceCount() {
+    return this.initialAssessmentResult() ? 1 : 0;
+  }
+
+  get portfolioWeakLabels() {
+    return (this.initialAssessmentResult()?.weaknesses || []).slice(0, 6).join(', ');
+  }
+
+  get portfolioStrengths() {
+    const assessmentStrengths = this.initialAssessmentResult()?.strengths || [];
+    if (assessmentStrengths.length > 0) {
+      return assessmentStrengths.slice(0, 6);
+    }
+
+    return [];
+  }
+
+  get portfolioWeaknesses() {
+    return this.initialAssessmentResult()?.weaknesses || [];
+  }
+
+  get portfolioWeakCards(): WeakAcquisItem[] {
+    if (this.portfolioWeakAcquis.length > 0) {
+      return this.portfolioWeakAcquis
+        .map((item, index) => {
+          const displayLabel = this.portfolioWeakDisplayLabel(item, index);
+          return {
+            ...item,
+            label: displayLabel,
+            key: item.key || this.portfolioWeakKey(item, displayLabel, index),
+            keywords: [item.label, ...(item.keywords || [])],
+          };
+        })
+        .filter(item => !this.isPortfolioRemediationPassed(item))
+        .map(item => {
+        const attempt = this.portfolioRemediationAttemptFor(item);
+        return !attempt
+          ? item
+          : {
+              ...item,
+              successRate: attempt.score,
+              reason: `Dernier score du quiz cible sur ${item.label}: ${attempt.score}%.`,
+            };
+      });
+    }
+
+    const assessment = this.initialAssessmentResult();
+    if (!assessment) {
+      return [];
+    }
+
+    return assessment.weaknesses
+      .map((label, index) => {
+      const weak: WeakAcquisItem = {
+        key: `initial-${this.normalizeSearchText(label)}-${index}`,
+        label: this.namedInitialWeakness(label, index),
+        severity: 100 - assessment.score,
+        severityLabel: 'A renforcer',
+        incorrectQuestions: 1,
+        totalQuestions: 1,
+        successRate: assessment.score,
+        keywords: [label],
+        courseId: 'Test de niveau initial',
+        chapterId: label,
+        reason: `Point faible detecte dans le test de niveau: ${label}.`,
+      };
+      const attempt = this.portfolioRemediationAttemptFor(weak);
+      return {
+        ...weak,
+        successRate: attempt?.score ?? weak.successRate,
+        reason: attempt
+          ? `Dernier score du quiz cible sur ${weak.label}: ${attempt.score}%.`
+          : weak.reason,
+      };
+    })
+      .filter(item => !this.isPortfolioRemediationPassed(item));
+  }
+
+  get portfolioEvaluationCount() {
+    return this.portfolioQuizTraceCount;
+  }
+
+  get portfolioInitialAssessmentDate() {
+    const result = this.initialAssessmentResult();
+    return result?.completedAt || this.recommendationAnalysis?.summary.lastSubmittedAt || '';
+  }
+
+  get portfolioInitialAssessmentLabel() {
+    const result = this.initialAssessmentResult();
+    if (!result) {
+      return 'Diagnostic EduVia - session locale';
+    }
+
+    return `Diagnostic EduVia - ${new Date(result.completedAt).toLocaleDateString('fr-FR')} - ${result.correctCount}/${result.totalQuestions} reponses justes`;
+  }
+
+  get portfolioRecommendations() {
+    const firstWeak = this.initialAssessmentResult()?.weaknesses?.[0] || '';
+    return [
+      firstWeak ? `Refaire le test de niveau ou un quiz cible sur ${firstWeak}` : 'Faire un quiz pour detecter les acquis faibles',
+      'Revoir les points faibles detectes dans le test de niveau initial',
+      'Comparer le prochain score avec le score du test initial',
+    ];
+  }
+
+  portfolioCourseResourceCount(courseId: string) {
+    return this.buildCourseResources(courseId).length;
+  }
+
+  retakeLevelTest() {
+    this.levelRetakeOpen = true;
+    this.closeRemediationCenter();
+    this.closePortfolioCourseSummary();
+    this.stopPreviewVoice();
+  }
+
+  onLevelRetakeCompleted(result: AssessmentResult) {
+    this.levelRetakeOpen = false;
+    this.studentLevel = result.level;
+    this.studentProfile.levelLabel = result.levelLabel;
+    localStorage.setItem(this.studentLevelStorageKey(), result.level);
+    localStorage.setItem(this.assessmentStorageKey(), JSON.stringify(result));
+    this.http.post('/api/student/level', {
+      level: result.level,
+      assessmentResult: result,
+    }).subscribe({
+      next: () => this.loadStudentContent(),
+      error: () => this.loadStudentContent(),
+    });
+  }
+
+  openPortfolioCourseSummary(course: CourseCatalogItem) {
+    this.portfolioSummaryCourse = course;
+    this.portfolioSummaryOpen = true;
+    this.portfolioSummary = this.readCachedPortfolioSummary(course.id);
+    this.portfolioSummaryError = '';
+    this.portfolioSummaryLoading = !this.portfolioSummary;
+    this.http
+      .post<PortfolioCourseSummary>('/api/student/portfolio/course-summary', {
+        courseId: course.id,
+        level: this.studentLevel,
+      })
+      .subscribe({
+        next: summary => {
+          this.portfolioSummary = summary;
+          this.writeCachedPortfolioSummary(course.id, summary);
+          this.portfolioSummaryLoading = false;
+          this.refreshView();
+        },
+        error: () => {
+          this.portfolioSummaryError = 'Impossible de generer le resume de ce cours pour le moment.';
+          this.portfolioSummaryLoading = false;
+          this.refreshView();
+        },
+      });
+  }
+
+  closePortfolioCourseSummary() {
+    this.portfolioSummaryOpen = false;
+    this.portfolioSummary = null;
+    this.portfolioSummaryCourse = null;
+    this.portfolioSummaryError = '';
+  }
+
+  downloadPortfolioSummaryPdf() {
+    if (!this.portfolioSummary) {
+      return;
+    }
+
+    const summary = this.portfolioSummary;
+    const lines = [
+      `Resume IA du cours: ${summary.courseTitle}`,
+      `Niveau: ${summary.level}`,
+      `Ressources: ${summary.resourceCount} - Quiz: ${summary.quizCount}`,
+      `Enseignant: ${summary.teacherName}`,
+      '',
+      'Vue d ensemble',
+      summary.overview,
+      '',
+      'Tableau des notions importantes',
+      ...summary.notions.flatMap(notion => [
+        `- ${notion.notion}`,
+        `  Explication: ${notion.explanation}`,
+        `  Importance: ${notion.importance}`,
+        `  Exemple: ${notion.example}`,
+      ]),
+      '',
+      'Resume detaille',
+      ...summary.details.flatMap(detail => [
+        detail.title,
+        detail.explanation,
+        ...detail.bullets.map(bullet => `- ${bullet}`),
+      ]),
+      '',
+      'Prochaines actions',
+      ...summary.nextActions.map(action => `- ${action}`),
+      '',
+      'Plan de revision',
+      ...summary.revisionPlan.map(step => `${step.step}. ${step.text}`),
+      '',
+      'Glossaire',
+      ...summary.glossary.map(item => `- ${item}`),
+    ];
+    const pdfBytes = this.buildSimplePdf(lines);
+    const pdfBuffer = new ArrayBuffer(pdfBytes.byteLength);
+    new Uint8Array(pdfBuffer).set(pdfBytes);
+    const blob = new Blob([pdfBuffer], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `${summary.courseTitle.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-') || 'resume'}-portfolio.pdf`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
+  private portfolioSummaryCacheKey(courseId: string) {
+    return `eduvia-portfolio-summary:${this.currentStudentEmail() || 'anonymous'}:${this.studentLevel}:${courseId}`;
+  }
+
+  private readCachedPortfolioSummary(courseId: string): PortfolioCourseSummary | null {
+    try {
+      const raw = localStorage.getItem(this.portfolioSummaryCacheKey(courseId));
+      if (!raw) {
+        return null;
+      }
+      const cached = JSON.parse(raw);
+      return cached?.summary || null;
+    } catch {
+      return null;
+    }
+  }
+
+  private writeCachedPortfolioSummary(courseId: string, summary: PortfolioCourseSummary) {
+    localStorage.setItem(
+      this.portfolioSummaryCacheKey(courseId),
+      JSON.stringify({ savedAt: new Date().toISOString(), summary }),
+    );
+  }
+
+  private portfolioRemediationScoresKey() {
+    return `eduvia-portfolio-remediation-scores:${this.currentStudentEmail() || 'anonymous'}`;
+  }
+
+  private loadPortfolioRemediationScores() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(this.portfolioRemediationScoresKey()) || '{}');
+      this.portfolioRemediationScores = parsed && typeof parsed === 'object' ? parsed : {};
+      this.passedPortfolioRemediationKeys = new Set(
+        Object.entries(this.portfolioRemediationScores)
+          .filter(([, value]) => typeof value === 'object' && value !== null && (value as PortfolioRemediationAttempt).passed === true)
+          .map(([key]) => key),
+      );
+    } catch {
+      this.portfolioRemediationScores = {};
+      this.passedPortfolioRemediationKeys = new Set<string>();
+    }
+  }
+
+  private savePortfolioRemediationScore(quiz: RecommendationItem, score: number, passed: boolean) {
+    const attempt: PortfolioRemediationAttempt = {
+      score: Math.max(0, Math.min(100, Math.round(Number(score) || 0))),
+      passed,
+      submittedAt: new Date().toISOString(),
+    };
+    const labels = [
+      ...(quiz.focusLabels || []),
+      quiz.title.replace(/^Renforcer l'acquis\s+/i, ''),
+      quiz.title.replace(/^Renforcer\s+/i, ''),
+    ].filter(Boolean);
+
+    labels.forEach(label => {
+      const key = this.normalizeSearchText(String(label));
+      this.portfolioRemediationScores[key] = attempt;
+      if (passed) {
+        this.passedPortfolioRemediationKeys.add(key);
+      }
+    });
+    localStorage.setItem(this.portfolioRemediationScoresKey(), JSON.stringify(this.portfolioRemediationScores));
+  }
+
+  private portfolioRemediationAttemptFor(weak: Pick<WeakAcquisItem, 'key' | 'label' | 'chapterId' | 'courseId'>): PortfolioRemediationAttempt | null {
+    const labels = [weak.key, weak.label].filter(Boolean);
+    for (const label of labels) {
+      const stored = this.portfolioRemediationScores[this.normalizeSearchText(String(label))];
+      if (typeof stored === 'number') {
+        return {
+          score: stored,
+          passed: stored >= 70,
+          submittedAt: '',
+        };
+      }
+      if (stored && typeof stored === 'object' && Number.isFinite(Number(stored.score))) {
+        return {
+          score: Math.max(0, Math.min(100, Math.round(Number(stored.score)))),
+          passed: stored.passed === true,
+          submittedAt: String(stored.submittedAt || ''),
+        };
+      }
+    }
+
+    return null;
+  }
+
+  private isPortfolioRemediationPassed(weak: Pick<WeakAcquisItem, 'key' | 'label' | 'chapterId' | 'courseId'>): boolean {
+    const labels = [weak.key, weak.label].filter(Boolean);
+    return labels.some(label => this.passedPortfolioRemediationKeys.has(this.normalizeSearchText(String(label)))) ||
+      this.portfolioRemediationAttemptFor(weak)?.passed === true;
+  }
+
+  private portfolioWeakKey(weak: WeakAcquisItem, label: string, index: number) {
+    return [
+      weak.key,
+      weak.courseId,
+      weak.chapterId,
+      label,
+      index,
+    ].filter(Boolean).map(value => this.normalizeSearchText(String(value))).join(':');
+  }
+
+  private portfolioWeakDisplayLabel(weak: WeakAcquisItem, index: number) {
+    const baseLabel = String(weak.label || weak.chapterId || weak.courseId || `acquis ${index + 1}`).trim();
+    const scope = [weak.courseId, weak.chapterId]
+      .map(value => String(value || '').trim())
+      .filter(value => value && this.normalizeSearchText(value) !== this.normalizeSearchText(baseLabel))
+      .slice(0, 2)
+      .join(' - ');
+
+    return scope ? `${baseLabel} (${scope})` : `${baseLabel} #${index + 1}`;
+  }
+
+  private namedInitialWeakness(label: string, index: number) {
+    return `Point faible ${index + 1}: ${label}`;
+  }
+
+  openRemediationCenter() {
+    this.remediationCenterOpen = true;
+    this.remediationDirectQuizOpen = false;
+  }
+
+  closeRemediationCenter() {
+    this.remediationCenterOpen = false;
+    this.remediationDirectQuizOpen = false;
+    this.remediationQuizLoadingKey = '';
+    if (this.selectedStandaloneQuiz?.quizMode === 'portfolio-remediation') {
+      this.closeStandaloneQuiz();
+    }
+  }
+
+  startPortfolioRemediationQuiz(weak: WeakAcquisItem) {
+    const key = weak.key || weak.label;
+    this.remediationCenterOpen = true;
+    this.remediationDirectQuizOpen = true;
+    this.selectedStandaloneQuizId = null;
+    this.selectedStandaloneQuiz = null;
+    this.remediationQuizLoadingKey = key;
+    this.http
+      .post<any>('/api/student/portfolio/remediation-quiz', {
+        acquis: weak.keywords?.[0] || weak.label,
+        courseId: weak.courseId,
+        chapterId: weak.chapterId,
+        level: this.studentLevel,
+      })
+      .subscribe({
+        next: quiz => {
+          const mappedQuiz = this.mapGeneratedQuizToRecommendation(quiz);
+          mappedQuiz.id = `portfolio-remediation-${this.normalizeSearchText(key) || Date.now()}`;
+          mappedQuiz.title = `Renforcer ${weak.label}`;
+          mappedQuiz.focusLabels = [weak.key, weak.label].filter(Boolean) as string[];
+          this.selectedStandaloneQuiz = mappedQuiz;
+          this.selectedStandaloneQuizId = mappedQuiz.id;
+          this.remediationQuizLoadingKey = '';
+          this.refreshView();
+        },
+        error: () => {
+          this.remediationQuizLoadingKey = '';
+          this.refreshView();
+        },
+      });
+  }
+
+  private applyLevelFromPortfolioScore(score: number) {
+    const nextLevel: StudentLevel = score >= 75 ? 'avance' : score >= 45 ? 'intermediaire' : 'debutant';
+    this.studentLevel = nextLevel;
+    this.studentProfile.levelLabel = this.levelLabel(nextLevel);
+    localStorage.setItem(this.studentLevelStorageKey(), nextLevel);
+    this.http.post('/api/student/level', {
+      level: nextLevel,
+      assessmentResult: {
+        source: 'portfolio-remediation',
+        score,
+        completedAt: new Date().toISOString(),
+      },
+    }).subscribe({ error: () => undefined });
+  }
+
+  private mapGeneratedQuizToRecommendation(item: ContentItem | any): RecommendationItem {
+    return {
+      id: String(item?._id || item?.id || `portfolio-remediation-${Date.now()}`),
+      icon: 'quiz',
+      title: String(item?.title || 'Quiz cible'),
+      type: 'Quiz',
+      level: this.levelLabel(this.studentLevel),
+      duration: `${this.normalizedQuizDurationMinutes(item?.quizDurationMinutes) || 10} min`,
+      reason: String(item?.recommendationReason || item?.description || 'Quiz cible sur vos acquis faibles.'),
+      contentType: 'quiz',
+      description: item?.description,
+      courseId: item?.courseId,
+      chapterId: item?.chapterId,
+      partId: item?.partId,
+      quizMode: item?.quizMode || 'portfolio-remediation',
+      quizDifficulty: item?.quizDifficulty || this.levelLabel(this.studentLevel),
+      quizDurationMinutes: item?.quizDurationMinutes || 10,
+      quizPassingScore: item?.quizPassingScore || 70,
+      quizQuestions: Array.isArray(item?.quizQuestions) ? item.quizQuestions : [],
+      quizAttempts: item?.quizAttempts || 5,
+      focusLabels: item?.focusLabels,
+      focusKeywords: item?.focusKeywords,
+      recommendationScore: item?.recommendationScore || 999,
+    };
   }
 
   private loadStudentContent() {
@@ -2707,6 +3200,12 @@ export class StudentDashboard implements OnInit, OnDestroy {
         this.studentProfile.className = this.resolveProfileClassName(profile);
         this.storeStudentClass(this.studentProfile.className);
         this.studentProfile.avatarDataUrl = profile.avatarDataUrl || '';
+        const profileLevel = this.normalizeLevel(profile.level);
+        if (profileLevel) {
+          this.studentLevel = profileLevel;
+          this.studentProfile.levelLabel = this.levelLabel(profileLevel);
+          localStorage.setItem(this.studentLevelStorageKey(), profileLevel);
+        }
         this.loadClassStudentCountFallback();
       },
       error: () => {
@@ -3497,11 +3996,8 @@ export class StudentDashboard implements OnInit, OnDestroy {
 
     let result = [...this.courseCatalog].filter(course => {
       const matchesSearch = !search || this.matchesCourseSearch(course, search);
-      const matchesLevel =
-        this.selectedLevelFilter === 'Tous les niveaux' ||
-        course.level === this.selectedLevelFilter;
 
-      return matchesSearch && matchesLevel;
+      return matchesSearch;
     });
 
     switch (this.selectedSort) {
@@ -4205,6 +4701,155 @@ export class StudentDashboard implements OnInit, OnDestroy {
     return (localStorage.getItem('current_user_email') || '')
       .trim()
       .toLowerCase();
+  }
+
+  private studentLevelStorageKey() {
+    const email = this.currentStudentEmail();
+    return email ? `eduvia-student-level-${email}` : 'eduvia-student-level';
+  }
+
+  private assessmentStorageKey() {
+    const email = this.currentStudentEmail();
+    return email ? `eduvia-initial-level-test-${email}` : 'eduvia-initial-level-test';
+  }
+
+  private initialAssessmentResult(): AssessmentResult | null {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(this.assessmentStorageKey()) || 'null');
+      if (
+        parsed &&
+        typeof parsed.score === 'number' &&
+        Array.isArray(parsed.strengths) &&
+        Array.isArray(parsed.weaknesses)
+      ) {
+        return parsed as AssessmentResult;
+      }
+    } catch {
+      return null;
+    }
+
+    return null;
+  }
+
+  private buildSimplePdf(lines: string[]): Uint8Array {
+    const fontSize = 11;
+    const lineHeight = 15;
+    const pageWidth = 595;
+    const pageHeight = 842;
+    const marginLeft = 48;
+    const topY = 790;
+    const bottomMargin = 58;
+    const wrappedLines = lines.flatMap(line => this.wrapPdfLine(line, 92));
+    const linesPerPage = Math.max(1, Math.floor((topY - bottomMargin) / lineHeight));
+    const pages: string[][] = [];
+
+    for (let index = 0; index < wrappedLines.length; index += linesPerPage) {
+      pages.push(wrappedLines.slice(index, index + linesPerPage));
+    }
+
+    if (pages.length === 0) {
+      pages.push(['Resume indisponible.']);
+    }
+
+    const objects: string[] = [];
+    objects.push('<< /Type /Catalog /Pages 2 0 R >>');
+    const pageObjectNumbers = pages.map((_, pageIndex) => 4 + pageIndex * 2);
+    objects.push(`<< /Type /Pages /Kids [${pageObjectNumbers.map(number => `${number} 0 R`).join(' ')}] /Count ${pages.length} >>`);
+    objects.push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+
+    pages.forEach((pageLines, pageIndex) => {
+      const pageObjectNumber = 4 + pageIndex * 2;
+      const contentObjectNumber = pageObjectNumber + 1;
+      const textLines = pageLines
+        .map(line => this.escapePdfText(line))
+        .map((line, index) => index === 0 ? `${marginLeft} ${topY} Td (${line}) Tj` : `0 -${lineHeight} Td (${line}) Tj`)
+        .join('\n');
+      const stream = `BT\n/F1 ${fontSize} Tf\n${textLines}\nET`;
+      objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 3 0 R >> >> /Contents ${contentObjectNumber} 0 R >>`);
+      objects.push(`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`);
+    });
+
+    let pdf = '%PDF-1.4\n';
+    const offsets = [0];
+    objects.forEach((object, index) => {
+      offsets.push(pdf.length);
+      pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+    });
+    const xrefOffset = pdf.length;
+    pdf += `xref\n0 ${objects.length + 1}\n`;
+    pdf += '0000000000 65535 f \n';
+    offsets.slice(1).forEach(offset => {
+      pdf += `${offset.toString().padStart(10, '0')} 00000 n \n`;
+    });
+    pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+
+    return Uint8Array.from(Array.from(pdf).map(character => character.charCodeAt(0) & 0xff));
+  }
+
+  private wrapPdfLine(line: string, maxChars: number): string[] {
+    const normalized = (line || '').trimEnd();
+    if (!normalized) {
+      return [' '];
+    }
+
+    const words = normalized.split(/\s+/);
+    const result: string[] = [];
+    let current = '';
+    words.forEach(word => {
+      const candidate = current ? `${current} ${word}` : word;
+      if (candidate.length <= maxChars) {
+        current = candidate;
+        return;
+      }
+      if (current) {
+        result.push(current);
+      }
+      current = word;
+    });
+    if (current) {
+      result.push(current);
+    }
+    return result;
+  }
+
+  private escapePdfText(value: string): string {
+    return (value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^\x20-\x7E]/g, "'")
+      .replace(/\\/g, '\\\\')
+      .replace(/\(/g, '\\(')
+      .replace(/\)/g, '\\)');
+  }
+
+  private readStoredStudentLevel(): StudentLevel | null {
+    const value = localStorage.getItem(this.studentLevelStorageKey()) || '';
+    return this.normalizeLevel(value);
+  }
+
+  private collectStoredQuizScores() {
+    const scores: number[] = [];
+    const email = this.currentStudentEmail();
+    const prefix = email ? `eduvia-quiz-result-${email}-` : 'eduvia-quiz-result-';
+
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index) || '';
+      if (!key.startsWith(prefix) || key.endsWith('-attempts')) {
+        continue;
+      }
+
+      try {
+        const parsed = JSON.parse(localStorage.getItem(key) || '{}');
+        const score = Number(parsed?.result?.score ?? parsed?.score);
+        if (Number.isFinite(score)) {
+          scores.push(Math.max(0, Math.min(100, Math.round(score))));
+        }
+      } catch {
+        // Ignore unrelated local storage values.
+      }
+    }
+
+    return scores;
   }
 
   private legacyQuizStorageKey(quizId: string) {

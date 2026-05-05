@@ -11,9 +11,11 @@ import { StudentDashboard } from './components/student-dashboard/student-dashboa
 import { TeacherDashboard } from './components/teacher-dashboard/teacher-dashboard';
 import { AdminDashboard } from './components/admin/admin-dashboard/admin-dashboard';
 import { Login } from './components/login/login';
+import { AiAssessment } from './components/student/ai-assessment/ai-assessment';
 
 type UserRole = 'student' | 'teacher' | 'admin' | null;
 type PublicAuthScreen = 'login' | 'forgot-password' | 'reset-password';
+type StudentLevel = 'debutant' | 'intermediaire' | 'avance';
 const pendingLoginRoleKey = 'eduvia_pending_login_role';
 
 @Component({
@@ -28,6 +30,7 @@ const pendingLoginRoleKey = 'eduvia_pending_login_role';
     TeacherDashboard,
     AdminDashboard,
     Login,
+    AiAssessment,
   ],
   templateUrl: './app.html',
   styleUrls: ['./app.css']
@@ -42,6 +45,8 @@ export class AppComponent implements OnInit, OnDestroy {
   resetEmail = signal<string | null>(null);
   resetUserName = signal<string | null>(null);
   isInitializing = signal(true);
+  studentNeedsAssessment = signal(false);
+  studentAssessmentLevel = signal<StudentLevel>('debutant');
   private transientNotificationTimeout: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
@@ -135,6 +140,7 @@ export class AppComponent implements OnInit, OnDestroy {
 
         if (roleNormalized === 'student') {
           this.refreshStoredStudentClass();
+          this.prepareStudentAssessmentGate(currentUser);
         }
 
         if (roleNormalized !== 'admin') {
@@ -210,6 +216,7 @@ export class AppComponent implements OnInit, OnDestroy {
 
         if (roleNormalized === 'student') {
           this.refreshStoredStudentClass();
+          this.prepareStudentAssessmentGate(currentUser);
         }
 
         if (roleNormalized !== 'admin') {
@@ -237,6 +244,29 @@ export class AppComponent implements OnInit, OnDestroy {
 
   dismissTransientNotification() {
     this.clearTransientNotification();
+  }
+
+  onAssessmentCompleted(result: {
+    level: StudentLevel;
+    levelLabel: string;
+    score: number;
+    correctCount: number;
+    totalQuestions: number;
+    strengths: string[];
+    weaknesses: string[];
+    recommendation: string;
+    completedAt: string;
+  }) {
+    const email = (localStorage.getItem('current_user_email') || '').trim().toLowerCase();
+    this.studentAssessmentLevel.set(result.level);
+    localStorage.setItem(this.assessmentStorageKey(email), JSON.stringify(result));
+    localStorage.setItem(this.studentLevelStorageKey(email), result.level);
+    this.studentNeedsAssessment.set(false);
+    this.authService.updateStudentLevel(result.level, result).subscribe({
+      error: () => {
+        // Le stockage local garde le dashboard coherent si le profil est momentanement indisponible.
+      },
+    });
   }
 
   onForgotPasswordRequested() {
@@ -335,6 +365,7 @@ export class AppComponent implements OnInit, OnDestroy {
     localStorage.removeItem('role');
     localStorage.removeItem('current_user_email');
     localStorage.removeItem('current_user_class');
+    this.studentNeedsAssessment.set(false);
     window.history.replaceState({}, '', window.location.pathname);
     this.resetState();
     this.isInitializing.set(false);
@@ -420,9 +451,32 @@ export class AppComponent implements OnInit, OnDestroy {
     if (storedRole !== 'admin') {
       if (storedRole === 'student') {
         this.refreshStoredStudentClass();
+        this.prepareStudentAssessmentGate();
       }
       this.checkPasswordStatus();
     }
+  }
+
+  private prepareStudentAssessmentGate(currentUser?: any) {
+    const email = (localStorage.getItem('current_user_email') || String(currentUser?.email || '')).trim().toLowerCase();
+    const storedLevel = localStorage.getItem(this.studentLevelStorageKey(email));
+    if (storedLevel === 'debutant' || storedLevel === 'intermediaire' || storedLevel === 'avance') {
+      this.studentAssessmentLevel.set(storedLevel);
+    }
+
+    const localResult = localStorage.getItem(this.assessmentStorageKey(email));
+    const completedFromUser =
+      currentUser?.profileData?.initialAssessmentCompleted === true ||
+      currentUser?.profileData?.initialAssessment;
+    this.studentNeedsAssessment.set(!localResult && !completedFromUser);
+  }
+
+  private assessmentStorageKey(email: string) {
+    return email ? `eduvia-initial-level-test-${email}` : 'eduvia-initial-level-test';
+  }
+
+  private studentLevelStorageKey(email: string) {
+    return email ? `eduvia-student-level-${email}` : 'eduvia-student-level';
   }
 
   private refreshStoredStudentClass() {
@@ -431,6 +485,19 @@ export class AppComponent implements OnInit, OnDestroy {
         const profile = response?.data || response || {};
         const className = this.resolveStudentClassName(profile);
         localStorage.setItem('current_user_class', className);
+        const email = (localStorage.getItem('current_user_email') || String(profile?.email || '')).trim().toLowerCase();
+        const profileLevel = profile?.level;
+        if (profileLevel === 'debutant' || profileLevel === 'intermediaire' || profileLevel === 'avance') {
+          this.studentAssessmentLevel.set(profileLevel);
+          localStorage.setItem(this.studentLevelStorageKey(email), profileLevel);
+        }
+        if (profile?.initialAssessmentCompleted === true || profile?.initialAssessment) {
+          localStorage.setItem(
+            this.assessmentStorageKey(email),
+            JSON.stringify(profile.initialAssessment || { completedAt: new Date().toISOString(), level: this.studentAssessmentLevel() }),
+          );
+          this.studentNeedsAssessment.set(false);
+        }
       },
       error: () => {
         // Keep the last known value in local storage when the profile endpoint is temporarily unavailable.

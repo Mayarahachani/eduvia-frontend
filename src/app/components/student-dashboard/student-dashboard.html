@@ -1,4 +1,19 @@
-<div class="student-shell">
+<app-ai-assessment
+  *ngIf="levelRetakeOpen"
+  [studentName]="studentProfile.name"
+  (completed)="onLevelRetakeCompleted($event)"
+></app-ai-assessment>
+<button
+  *ngIf="levelRetakeOpen"
+  type="button"
+  class="level-retake-close"
+  (click)="levelRetakeOpen = false"
+  aria-label="Fermer le test de niveau"
+>
+  X
+</button>
+
+<div class="student-shell" *ngIf="!levelRetakeOpen">
   <header class="student-header">
     <div class="brand-block">
       <div class="logo-wrapper">
@@ -60,6 +75,7 @@
           <h2>Mes Cours Disponibles</h2>
           <p>Choisissez un cours pour commencer votre apprentissage</p>
         </div>
+        <span class="catalog-level-chip">Niveau {{ studentProfile.levelLabel }}</span>
       </section>
 
       <section class="catalog-toolbar">
@@ -71,13 +87,6 @@
             (input)="onSearchInput($any($event.target).value)"
             placeholder="Rechercher un cours..."
           />
-        </div>
-
-        <div class="catalog-select">
-          <mat-icon>filter_list</mat-icon>
-          <select [(ngModel)]="selectedLevelFilter" (ngModelChange)="updateFilteredCourseCatalog()">
-            <option *ngFor="let level of levelFilters" [ngValue]="level">{{ level }}</option>
-          </select>
         </div>
 
       </section>
@@ -97,7 +106,7 @@
             <div class="course-card__body">
               <div class="course-card__title-row">
                 <h3>{{ course.title }}</h3>
-                <span class="course-pill" [class]="courseLevelClass(course.level)">{{ course.level }}</span>
+                <span class="course-pill" [class]="courseLevelClass(studentProfile.levelLabel)">{{ studentProfile.levelLabel }}</span>
               </div>
 
               <p class="course-card__description">{{ course.description }}</p>
@@ -158,7 +167,7 @@
                 </p>
               </div>
 
-              <span class="course-pill" [class]="courseLevelClass(course.level)">{{ course.level }}</span>
+              <span class="course-pill" [class]="courseLevelClass(studentProfile.levelLabel)">{{ studentProfile.levelLabel }}</span>
             </div>
 
             <div class="course-view__meta">
@@ -589,6 +598,146 @@
         <p>Terminez au moins un quiz pour generer des recommandations de cours et de quiz ciblees.</p>
       </div>
     </ng-template>
+  </section>
+
+  <section *ngIf="activeTab === 'portfolio'" class="portfolio-shell">
+    <header class="portfolio-hero">
+      <div>
+        <span>Student Portfolio</span>
+        <h2>Portfolio intelligent de {{ studentProfile.name }}</h2>
+      </div>
+      <button type="button" class="portfolio-primary" (click)="retakeLevelTest()">
+        <mat-icon>restart_alt</mat-icon>
+        Refaire le test de niveau
+      </button>
+    </header>
+
+    <div class="portfolio-metrics">
+      <article>
+        <mat-icon>query_stats</mat-icon>
+        <span>Score moyen</span>
+        <strong>{{ portfolioAverageScore }}%</strong>
+        <small>{{ portfolioQuizTraceCount }} quiz traces</small>
+      </article>
+      <article>
+        <mat-icon>trending_up</mat-icon>
+        <span>Progression</span>
+        <strong>{{ dashboardProgressPercent }}%</strong>
+        <small>Parcours et quiz combines</small>
+      </article>
+      <article>
+        <mat-icon>verified</mat-icon>
+        <span>Cours completes</span>
+        <strong>{{ portfolioCompletedCourses }}/{{ courseCatalog.length }}</strong>
+        <small>Selon quiz et activite</small>
+      </article>
+      <article>
+        <mat-icon>school</mat-icon>
+        <span>Niveau actuel</span>
+        <strong>{{ studentProfile.levelLabel }}</strong>
+        <small>Mis a jour par le test</small>
+      </article>
+    </div>
+
+    <section class="portfolio-panel">
+      <div class="portfolio-panel__head">
+        <div>
+          <span>Historique des cours</span>
+          <h3>Cours suivis</h3>
+        </div>
+        <small>{{ portfolioCompletedCourses }} / {{ courseCatalog.length }} completes</small>
+      </div>
+
+      <article class="portfolio-course-row" *ngFor="let course of courseCatalog">
+        <div>
+          <h4>{{ course.title }}</h4>
+          <p>{{ course.teacher }} - {{ portfolioCourseResourceCount(course.id) }} ressource(s)</p>
+        </div>
+        <div class="portfolio-course-progress">
+          <span>{{ course.progress >= 100 ? 'Complete' : course.progress > 0 ? 'En cours' : 'Non commence' }}</span>
+          <div><i [style.width.%]="course.progress"></i></div>
+          <small>{{ course.progressLabel }}</small>
+        </div>
+        <button type="button" class="portfolio-soft-button" (click)="openPortfolioCourseSummary(course)">Voir resume</button>
+      </article>
+    </section>
+
+    <div class="portfolio-grid">
+      <section class="portfolio-panel">
+        <div class="portfolio-panel__head">
+          <div>
+            <span>Historique des quiz</span>
+            <h3>Scores et dates</h3>
+          </div>
+          <small>{{ portfolioEvaluationCount }} evaluation(s)</small>
+        </div>
+        <article class="portfolio-quiz-row">
+          <div>
+            <h4>Test de niveau initial</h4>
+            <p>{{ portfolioInitialAssessmentLabel }}</p>
+            <strong *ngIf="portfolioWeaknesses.length">A revoir: {{ portfolioWeakLabels }}</strong>
+          </div>
+          <span>{{ portfolioAverageScore }}%</span>
+        </article>
+      </section>
+
+      <section class="portfolio-panel">
+        <div class="portfolio-panel__head">
+          <div>
+            <span>Evolution dans le temps</span>
+            <h3>Progression des scores</h3>
+          </div>
+          <mat-icon>show_chart</mat-icon>
+        </div>
+        <div class="portfolio-score-line">
+          <span>Test de niveau initial</span>
+          <div><i [style.width.%]="portfolioAverageScore"></i></div>
+          <strong>{{ portfolioAverageScore }}%</strong>
+        </div>
+      </section>
+    </div>
+
+    <div class="portfolio-grid portfolio-grid--three">
+      <section class="portfolio-panel">
+        <h3><mat-icon>auto_awesome</mat-icon>Forces detectees</h3>
+        <ul><li *ngFor="let strength of portfolioStrengths">{{ strength }}</li></ul>
+      </section>
+      <section class="portfolio-panel">
+        <h3><mat-icon>track_changes</mat-icon>Faiblesses a traiter</h3>
+        <ul><li *ngFor="let weak of portfolioWeaknesses">{{ weak }}</li></ul>
+      </section>
+      <section class="portfolio-panel">
+        <h3><mat-icon>psychology</mat-icon>Recommandations IA</h3>
+        <ul>
+          <li *ngFor="let recommendation of portfolioRecommendations">{{ recommendation }}</li>
+        </ul>
+      </section>
+    </div>
+
+    <section class="portfolio-panel portfolio-remediation">
+      <div class="portfolio-panel__head">
+        <div>
+          <span>Remediation intelligente</span>
+          <h3>Quiz cibles sur vos acquis faibles</h3>
+        </div>
+        <button type="button" class="portfolio-primary" (click)="openRemediationCenter()">
+          <mat-icon>auto_awesome</mat-icon>
+          Ouvrir le centre IA
+        </button>
+      </div>
+      <div class="portfolio-remediation-grid">
+        <article *ngFor="let weak of portfolioWeakCards.slice(0, 4)">
+          <span>{{ weak.courseId || 'Test de niveau initial' }}</span>
+          <strong>{{ weak.successRate }}%</strong>
+          <h4>Renforcer l'acquis {{ weak.label }}</h4>
+          <p>Acquis faibles detectes: <b>{{ weak.label }}</b></p>
+          <small>Derniere tentative: {{ weak.reason }}</small>
+          <button type="button" class="portfolio-soft-button" (click)="startPortfolioRemediationQuiz(weak)">
+            {{ remediationQuizLoadingKey === (weak.key || weak.label) ? 'Generation...' : 'Faire le quiz' }}
+          </button>
+        </article>
+      </div>
+    </section>
   </section>
 
   <section *ngIf="activeTab === 'communaute'" class="embedded-section">
@@ -1228,6 +1377,141 @@
   <section *ngIf="activeTab === 'parametres'" class="embedded-section">
     <app-teacher-profile-settings></app-teacher-profile-settings>
   </section>
+
+  <div class="portfolio-modal-backdrop" *ngIf="portfolioSummaryOpen" (click)="closePortfolioCourseSummary()">
+    <section class="portfolio-summary-modal" (click)="$event.stopPropagation()">
+      <button type="button" class="portfolio-modal-close" (click)="closePortfolioCourseSummary()" aria-label="Fermer">X</button>
+      <div *ngIf="portfolioSummaryLoading" class="embedded-section">Generation du resume...</div>
+      <div *ngIf="portfolioSummaryError" class="embedded-section">{{ portfolioSummaryError }}</div>
+      <ng-container *ngIf="portfolioSummary as summary">
+        <header class="portfolio-summary-head">
+          <div>
+            <span>Resume IA du cours</span>
+            <h2>{{ summary.courseTitle }}</h2>
+            <p>Fiche structuree generee a partir des fichiers publies dans ce cours.</p>
+          </div>
+        <div class="portfolio-summary-tags">
+            <span>{{ summary.resourceCount }} document(s)</span>
+          <span>{{ summary.quizCount }} quiz</span>
+          <span>{{ summary.teacherName }}</span>
+        </div>
+        </header>
+        <section class="summary-card">
+          <h3>Vue d'ensemble du cours</h3>
+          <p>{{ summary.overview }}</p>
+        </section>
+        <section class="summary-card summary-card--accent">
+          <span>Synthese rapide</span>
+          <h3>Tableau des notions importantes</h3>
+          <table>
+            <thead><tr><th>Notion</th><th>Explication claire</th><th>Pourquoi c'est important</th><th>Exemple / usage</th></tr></thead>
+            <tbody>
+              <tr *ngFor="let notion of summary.notions">
+                <td>{{ notion.notion }}</td>
+                <td>{{ notion.explanation }}</td>
+                <td>{{ notion.importance }}</td>
+                <td>{{ notion.example }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+        <section class="summary-card">
+          <span>Resume detaille</span>
+          <h3>Explication par partie du cours</h3>
+          <div class="summary-detail-grid">
+            <article *ngFor="let detail of summary.details">
+              <h4>{{ detail.title }}</h4>
+              <p>{{ detail.explanation }}</p>
+              <ul><li *ngFor="let bullet of detail.bullets">{{ bullet }}</li></ul>
+            </article>
+          </div>
+        </section>
+        <section class="summary-card">
+          <h3>Prochaines actions conseillees</h3>
+          <p *ngFor="let action of summary.nextActions">{{ action }}</p>
+        </section>
+        <div class="summary-two-cols">
+          <section class="summary-card">
+            <span>Revision</span>
+            <h3>Plan de travail conseille</h3>
+            <ol><li *ngFor="let step of summary.revisionPlan">{{ step.text }}</li></ol>
+          </section>
+          <section class="summary-card">
+            <span>Memo</span>
+            <h3>Glossaire express</h3>
+            <p *ngFor="let item of summary.glossary">{{ item }}</p>
+          </section>
+        </div>
+        <footer class="summary-download-row">
+          <button type="button" class="portfolio-primary" (click)="downloadPortfolioSummaryPdf()">
+            <mat-icon>picture_as_pdf</mat-icon>
+            Telecharger le resume PDF
+          </button>
+        </footer>
+      </ng-container>
+    </section>
+  </div>
+
+  <div class="portfolio-modal-backdrop" *ngIf="remediationCenterOpen" (click)="closeRemediationCenter()">
+    <section
+      class="portfolio-summary-modal portfolio-remediation-modal"
+      [class.portfolio-remediation-modal--quiz]="remediationDirectQuizOpen || selectedStandaloneQuizId"
+      (click)="$event.stopPropagation()"
+    >
+      <button type="button" class="portfolio-modal-close" (click)="closeRemediationCenter()" aria-label="Fermer">X</button>
+      <header class="portfolio-summary-head">
+        <div>
+          <span>Centre de remediation IA</span>
+          <h2>{{ selectedStandaloneQuiz?.title || 'Quiz cibles sur vos resultats faibles' }}</h2>
+          <p>
+            {{
+              remediationDirectQuizOpen
+                ? 'Votre quiz cible est genere puis ouvert directement ici.'
+                : 'Selectionnez un point faible pour lancer un quiz de 10 questions base sur le contenu reel du cours.'
+            }}
+          </p>
+        </div>
+      </header>
+      <ng-container *ngIf="remediationDirectQuizOpen; else remediationListView">
+        <ng-container *ngIf="selectedStandaloneQuizId && selectedStandaloneQuiz; else remediationQuizLoading">
+          <ng-container *ngTemplateOutlet="remediationQuizView"></ng-container>
+        </ng-container>
+      </ng-container>
+      <ng-template #remediationListView>
+        <article class="remediation-list-row" *ngFor="let weak of portfolioWeakCards">
+          <div>
+            <span>{{ weak.courseId || 'Test de niveau initial' }}</span>
+            <h3>Renforcer l'acquis {{ weak.label }}</h3>
+            <p>{{ weak.chapterId || weak.label }}</p>
+            <small>Dernier score faible: {{ weak.successRate }}%</small>
+          </div>
+          <button type="button" class="portfolio-primary" (click)="startPortfolioRemediationQuiz(weak)">
+            <mat-icon>quiz</mat-icon>
+            {{ remediationQuizLoadingKey === (weak.key || weak.label) ? 'Generation...' : 'Faire le quiz' }}
+          </button>
+        </article>
+      </ng-template>
+      <ng-template #remediationQuizLoading>
+        <div class="remediation-quiz-loading">
+          <mat-icon>auto_awesome</mat-icon>
+          <strong>Generation du quiz...</strong>
+          <span>Le quiz s'ouvrira automatiquement dans cette popup.</span>
+        </div>
+      </ng-template>
+      <ng-template #remediationQuizView>
+        <div class="remediation-quiz-view">
+          <app-course-quiz
+            [studentLevel]="studentLevel"
+            [standalone]="true"
+            [selectedQuizId]="selectedStandaloneQuizId"
+            [standaloneQuizData]="selectedStandaloneQuiz"
+            (closed)="closeStandaloneQuiz()"
+            (quizSubmitted)="onQuizSubmitted($event)"
+          ></app-course-quiz>
+        </div>
+      </ng-template>
+    </section>
+  </div>
 
   <div
     *ngIf="selectedStandaloneQuizId && selectedStandaloneQuiz && activeTab === 'recommendation'"
