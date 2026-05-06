@@ -2,8 +2,8 @@ pipeline {
     agent any
 
     environment {
-        IMAGE_NAME = 'ton-dockerhub/eduvia-frontend'
-        IMAGE_TAG = "${BUILD_NUMBER}"
+        IMAGE_NAME = 'mayarahachanipi/eduvia-frontend'
+        IMAGE_TAG  = "${BUILD_NUMBER}"
     }
 
     stages {
@@ -19,7 +19,7 @@ pipeline {
         stage('Push Docker Image') {
             steps {
                 withCredentials([usernamePassword(
-                    credentialsId: 'dockerhub-credentials',
+                    credentialsId: '21e7312b-66ff-46b2-9453-b06a01330b43', // ID Jenkins correct
                     usernameVariable: 'DOCKER_USER',
                     passwordVariable: 'DOCKER_PASS'
                 )]) {
