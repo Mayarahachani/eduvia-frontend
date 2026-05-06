@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     tools {
-        nodejs 'node20'
+        nodejs 'node22'
     }
 
     environment {
@@ -27,7 +27,7 @@ pipeline {
         stage('Unit Tests + Coverage') {
             steps {
                 dir('frontend') {
-                    sh 'npm run test -- --watch=false --code-coverage'
+                    sh 'npm run test:ci'
                 }
             }
         }
