@@ -1,4 +1,4 @@
-import { ChangeDetectorRef, Component } from '@angular/core';
+import { Component } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule, ReactiveFormsModule, FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { MatFormFieldModule } from '@angular/material/form-field';
@@ -34,7 +34,6 @@ export class UpdateProfileComponent {
     private fb: FormBuilder,
     private snackBar: MatSnackBar,
     private auth: AuthService,
-    private cdr: ChangeDetectorRef,
   ) {
     this.profileForm = this.fb.group({
       fullName: ['Jean Dupont', Validators.required],
@@ -74,7 +73,6 @@ export class UpdateProfileComponent {
       this.auth.updateProfile(payload).subscribe({
         next: () => {
           this.isLoading = false;
-          this.cdr.detectChanges();
           this.snackBar.open('Profil mis à jour avec succès!', 'Fermer', {
             duration: 3000,
             horizontalPosition: 'end',
@@ -84,7 +82,6 @@ export class UpdateProfileComponent {
         },
         error: (err: any) => {
           this.isLoading = false;
-          this.cdr.detectChanges();
           const msg = err?.error?.message || 'Erreur lors de la mise à jour du profil';
           this.snackBar.open(msg, 'Fermer', { duration: 4000, horizontalPosition: 'end', verticalPosition: 'top' });
         },
