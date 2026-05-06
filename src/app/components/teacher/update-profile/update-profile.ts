@@ -59,7 +59,6 @@ export class UpdateProfileComponent {
             address: profile.address ?? this.profileForm.get('address')?.value,
             bio: profile.bio ?? this.profileForm.get('bio')?.value,
           });
-          this.cdr.detectChanges();
         }
       },
       error: (err: any) => {

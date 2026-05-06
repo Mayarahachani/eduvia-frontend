@@ -881,11 +881,9 @@ export class StudentForum implements OnInit, OnDestroy {
           this.cacheForumSnapshot();
           this.applyPendingConsultActionIfAny();
           this.loading = false;
-          this.cdr.detectChanges();
         },
         error: (error) => {
           this.loading = false;
-          this.cdr.detectChanges();
           const backendMessage = String(error?.error?.message || '').trim();
           this.errorMessage = backendMessage
             ? `Impossible de charger les demandes d'aide (${backendMessage}).`
